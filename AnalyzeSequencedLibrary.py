@@ -4,8 +4,13 @@ from os.path import isfile, join, isdir
 
 import gzip
 from Bio import SeqIO
+from Bio.Seq import Seq
 from Bio.Blast import NCBIXML
 from Bio.Blast.Applications import NcbiblastnCommandline
+
+import seaborn as sns
+import matplotlib.pyplot as plt
+sns.set(style="darkgrid")
 
 import multiprocessing as mp
 
@@ -17,6 +22,7 @@ def parseArgs():
     parser.add_argument("-br", "--blastresults", help="directory to write blast input fasta files", required=True)
     parser.add_argument("-bd", "--blastdatabase", help="blast database identifier", required=True)
     parser.add_argument("-s", "--summarydirectory", help="summary results directory", required=True)
+    parser.add_argument("-g", "--guidernas", help="guide RNA Sequence file", required=True)
     parser.add_argument("-t", "--threads", help="threadcount for blast analysis", required=False, default=1)
     parser.add_argument("-bs", "--batch", help="batch size", required=False, default=1000)
     args = parser.parse_args()
@@ -49,7 +55,6 @@ def loadReadFastqFiles(libraryDirectory=None):
 
     print ('Read ' + str(readCount) + ' reads from ' + str(len(fileList)) + ' files.')
     return readData
-
 
 def writeReadFastas(readData=None, outputDirectory=None, batchSize=None, newline='\n'):
     print('Writing Read Fastas to directory:' + str(outputDirectory))
@@ -86,7 +91,6 @@ def writeReadFastas(readData=None, outputDirectory=None, batchSize=None, newline
     if fileHandle is not None:
         fileHandle.close()
 
-
 def parseBlastXml(xmlFileName=None, resultFileName=None, deleteXmlFile=False, delimiter=',', newline='\n'):
     with open(resultFileName, 'w') as resultFile:
         blastRecords = NCBIXML.parse(open(xmlFileName, 'r'))
@@ -104,7 +108,6 @@ def parseBlastXml(xmlFileName=None, resultFileName=None, deleteXmlFile=False, de
     # TODO: Delete the XML File.
     # Delete XML file.
 
-
 def performBlastBatch(fastaDirectory=None, fastaFile=None, outputDirectory=None, blastDatabase=None):
     print('Blasting file ' + str(fastaFile))
     outputFile = join(outputDirectory,fastaFile + ".xml")
@@ -113,8 +116,6 @@ def performBlastBatch(fastaDirectory=None, fastaFile=None, outputDirectory=None,
 
     parseBlastXml(xmlFileName=outputFile, resultFileName=outputFile.replace('.fasta.xml','.csv'), deleteXmlFile=True)
     print('Done Blasting file ' + str(fastaFile))
-
-
 
 def blastReads(fastaDirectory=None, outputDirectory=None, threadCount=1, blastDatabase=None):
     fastaFileList = sorted([f for f in listdir(fastaDirectory) if (isfile(join(fastaDirectory, f)) and f.endswith('.fasta'))])
@@ -134,13 +135,11 @@ def blastReads(fastaDirectory=None, outputDirectory=None, threadCount=1, blastDa
     pool.close()
     pool.join()
 
-
 def findOriginReadFile(readData=None, readName=None):
     for fileName in readData:
         if readName in readData[fileName].keys():
             return fileName
     return '?'
-
 
 def summarizeAndCombineBlastResults(readData=None, blastResultDirectory=None, finalResultDirectory=None, newline='\n', delimiter=','):
     resultFileList = sorted([f for f in listdir(blastResultDirectory) if (isfile(join(blastResultDirectory, f)) and f.endswith('.csv'))])
@@ -161,18 +160,18 @@ def summarizeAndCombineBlastResults(readData=None, blastResultDirectory=None, fi
                     outputCombinedFile.write(delimiter.join([originReadFile,readName,bestHit]) + newline)
 
                     # Summary data
-                    if bestHit is not None and len(bestHit.strip())>1:
-                        # Total summary
-                        if bestHit not in totalBlastHits.keys():
-                            totalBlastHits[bestHit]=0
-                        totalBlastHits[bestHit] += 1
+                    #if bestHit is not None and len(bestHit.strip())>1:
+                    # Total summary
+                    if bestHit not in totalBlastHits.keys():
+                        totalBlastHits[bestHit]=0
+                    totalBlastHits[bestHit] += 1
 
-                        # Per-Readfile summary
-                        if originReadFile not in perReadFileBlastHits.keys():
-                            perReadFileBlastHits[originReadFile] = {}
-                        if bestHit not in perReadFileBlastHits[originReadFile].keys():
-                            perReadFileBlastHits[originReadFile][bestHit] = 0
-                        perReadFileBlastHits[originReadFile][bestHit] += 1
+                    # Per-Readfile summary
+                    if originReadFile not in perReadFileBlastHits.keys():
+                        perReadFileBlastHits[originReadFile] = {}
+                    if bestHit not in perReadFileBlastHits[originReadFile].keys():
+                        perReadFileBlastHits[originReadFile][bestHit] = 0
+                    perReadFileBlastHits[originReadFile][bestHit] += 1
 
 
     summaryFileName = join(finalResultDirectory,'HitSummary.txt')
@@ -180,7 +179,11 @@ def summarizeAndCombineBlastResults(readData=None, blastResultDirectory=None, fi
         summaryFile.write('All reads blast hits:' + newline + newline)
         sortedHits = {k: v for k, v in sorted(totalBlastHits.items(), key=lambda item: item[1], reverse=True)}
         for bestHit in sortedHits.keys():
-            summaryFile.write(bestHit + '  (' + str(sortedHits[bestHit]) + ' reads)' + newline)
+            if bestHit is None or len(bestHit.strip())<1:
+                hitName='No Hits Found '
+            else:
+                hitName=bestHit
+            summaryFile.write(hitName + '  (' + str(sortedHits[bestHit]) + ' reads)' + newline)
 
         summaryFile.write(newline + newline)
 
@@ -189,11 +192,139 @@ def summarizeAndCombineBlastResults(readData=None, blastResultDirectory=None, fi
 
             sortedHits = {k: v for k, v in sorted(perReadFileBlastHits[readFileName].items(), key=lambda item: item[1], reverse=True)}
             for bestHit in sortedHits.keys():
-                summaryFile.write(bestHit + '  (' + str(sortedHits[bestHit]) + ' reads)' + newline)
+                if bestHit is None or len(bestHit.strip()) < 1:
+                    hitName = 'No Hits Found '
+                else:
+                    hitName = bestHit
+                summaryFile.write(hitName + '  (' + str(sortedHits[bestHit]) + ' reads)' + newline)
 
             summaryFile.write(newline + newline)
 
+def writeReadSummary(readData=None, finalResultDirectory=None, newline='\n',delimiter=','):
+    print('Writing Read Summary to ' + str(finalResultDirectory))
 
+    if not isdir(finalResultDirectory):
+        makedirs(finalResultDirectory)
+
+    readLengths=[]
+    readLengthsPerFile={}
+
+    readLengthFilename = join(finalResultDirectory,'ReadLengths.csv')
+    with open (readLengthFilename,'w') as readLengthFile:
+        for readFileName in readData.keys():
+            readLengthsPerFile[readFileName]=[]
+            for readName in readData[readFileName].keys():
+                # TODO: Calculate average read quality, maybe
+                readLengthFile.write(delimiter.join([readFileName,readName,str(len(readData[readFileName][readName]['seq']))]) + newline)
+
+                readLengths.append(len(readData[readFileName][readName]['seq']))
+                readLengthsPerFile[readFileName].append(len(readData[readFileName][readName]['seq']))
+
+
+    sns.kdeplot(readLengths)
+    plt.title('Read Length, All ' + ' (N=' + str(len(readLengths)) + ')')
+    plt.savefig(join(finalResultDirectory,'Length.AllReads.png'), bbox_inches='tight')
+    plt.clf()
+    for readFileName in readLengthsPerFile.keys():
+        sns.kdeplot(readLengthsPerFile[readFileName])
+        plt.title('Read Length, ' + str(readFileName) + ' (N=' + str(len(readLengthsPerFile[readFileName])) + ')')
+        plt.savefig(join(finalResultDirectory,'Length.' + str(readFileName) + '.png'), bbox_inches='tight')
+        plt.clf()
+
+def readGuideRNAs(guideFileName=None, delimiter='\t', header=True):
+    print('Reading Guide RNA File:' + str(guideFileName))
+
+    guideRNAs = {}
+    with open(guideFileName,'r') as guideFile:
+        dataLines = guideFile.readlines()
+        for lineIndex, line in enumerate(dataLines):
+            if not header or lineIndex > 0:
+                dataTokens = line.split(delimiter)
+
+                geneName = dataTokens[1]
+                sgRnaTarget = dataTokens[6]
+
+                if geneName not in guideRNAs.keys():
+                    guideRNAs[geneName] = []
+                guideRNAs[geneName].append(sgRnaTarget)
+
+    return guideRNAs
+
+def checkReadsAgainstGuideRNAs(readData=None, guideRnas=None, threadCount=1, finalResultDirectory=None, delimiter=',', newline='\n'):
+    print('Checking Reads against Guide RNAs, threadcount=' + str(threadCount))
+
+    pool = mp.Pool(threadCount)
+    results = []
+
+    for readfileIndex, readFileName in enumerate(sorted(list(readData.keys()))):
+        print('Checking Read File ' + str(readFileName) + ' (' + str(readfileIndex+1) + ' of ' + str(len(list(readData.keys()))) + ')')
+
+        #compareReadFileAgainstGuideRNAs(readFileName=readFileName, reads=readData[readFileName], guideRnas=guideRnas)
+        results.append(pool.starmap_async(compareReadFileAgainstGuideRNAs, [[readFileName, readData[readFileName], guideRnas]]))
+
+    print('Done checking Reads against Guide RNAs')
+
+    pool.close()
+    pool.join()
+
+    combinedHitSummary = {}
+    for resultObject in results:
+        result = resultObject.get()[0]
+        for geneName in result.keys():
+            if geneName not in combinedHitSummary.keys():
+                combinedHitSummary[geneName] = set()
+            combinedHitSummary[geneName] = combinedHitSummary[geneName].union(result[geneName])
+
+    # Sort by read counts
+    combinedHitSummary = {k: v for k, v in sorted(combinedHitSummary.items(), key=lambda item: len(list(item[1])), reverse=True)}
+
+    hitSummaryFileName = join(finalResultDirectory, 'sgRNAHitSummary.csv')
+    with open(hitSummaryFileName,'w') as hitSummaryFile:
+        hitSummaryFile.write(delimiter.join(['Total Genes Found:' , str(len(list(combinedHitSummary.keys())))]) + newline)
+
+        hitSummaryFile.write(newline+newline + delimiter.join(['Gene','Read Count']) + newline)
+
+
+        for geneName in combinedHitSummary.keys():
+            hitSummaryFile.write(delimiter.join([geneName, str(len(list(combinedHitSummary[geneName])))]) + newline)
+
+        for geneName in combinedHitSummary.keys():
+            hitSummaryFile.write(newline + newline + delimiter.join([geneName, str(len(list(combinedHitSummary[geneName])))]) + newline)
+            for readName in list(combinedHitSummary[geneName]):
+                hitSummaryFile.write(delimiter.join([findOriginReadFile(readData=readData, readName=readName),readName]) + newline)
+
+
+
+def compareReadFileAgainstGuideRNAs(readFileName=None, reads=None, guideRnas=None):
+    print('Comparing reads for file ' + str(readFileName))
+    reverseComplementGuideRNAs = {}
+    for geneName in guideRnas.keys():
+        reverseComplementGuideRNAs[geneName] = [str(Seq(sgRna).reverse_complement()) for sgRna in guideRnas[geneName]]
+
+    guideRnaHitSummary = {}
+    for readName in reads.keys():
+        readSeq = reads[readName]['seq']
+
+        # Check "forward" target sequences
+        for geneName in guideRnas.keys():
+            for sgRna in guideRnas[geneName]:
+                if sgRna in readSeq:
+                    if geneName not in guideRnaHitSummary.keys():
+                        guideRnaHitSummary[geneName] = set()
+
+                    guideRnaHitSummary[geneName].add(readName)
+
+        # Check "reverse" target sequences
+        for geneName in reverseComplementGuideRNAs.keys():
+            for sgRna in reverseComplementGuideRNAs[geneName]:
+                if sgRna in readSeq:
+                    if geneName not in guideRnaHitSummary.keys():
+                        guideRnaHitSummary[geneName] = set()
+
+                    guideRnaHitSummary[geneName].add(readName)
+
+    print('Done comparing reads for file ' + str(readFileName))
+    return guideRnaHitSummary
 
 
 if __name__ == '__main__':
@@ -202,6 +333,9 @@ if __name__ == '__main__':
     # TODO: Maybe need to combine this, and write to hard drive instead of keeping it all in memory.
     readData = loadReadFastqFiles(libraryDirectory=args.sequencedlibrary)
     writeReadFastas(readData=readData, outputDirectory=args.fasta, batchSize=int(args.batch))
+    writeReadSummary(readData=readData, finalResultDirectory=args.summarydirectory)
+    guideRnas = readGuideRNAs(guideFileName=args.guidernas)
+    checkReadsAgainstGuideRNAs(readData=readData, guideRnas=guideRnas, threadCount=int(args.threads), finalResultDirectory=args.summarydirectory)
     blastReads(fastaDirectory=args.fasta, outputDirectory=args.blastresults, blastDatabase=args.blastdatabase, threadCount=int(args.threads))
     summarizeAndCombineBlastResults(readData=readData, blastResultDirectory=args.blastresults, finalResultDirectory=args.summarydirectory)
 
