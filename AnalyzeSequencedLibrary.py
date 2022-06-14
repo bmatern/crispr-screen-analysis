@@ -3,6 +3,8 @@ from os import listdir, makedirs
 from os.path import isfile, join, isdir
 
 import gzip
+from traceback import print_exc
+
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.Blast import NCBIXML
@@ -13,7 +15,6 @@ import matplotlib.pyplot as plt
 sns.set(style="darkgrid")
 
 import multiprocessing as mp
-
 
 def parseArgs():
     parser = argparse.ArgumentParser()
@@ -28,7 +29,6 @@ def parseArgs():
     args = parser.parse_args()
 
     return args
-
 
 def loadReadFastqFiles(libraryDirectory=None):
     print('Loading read files from directory:' + str(libraryDirectory))
@@ -268,12 +268,21 @@ def checkReadsAgainstGuideRNAs(readData=None, guideRnas=None, threadCount=1, fin
     pool.join()
 
     combinedHitSummary = {}
+    combinedReadSummary = {}
+
     for resultObject in results:
-        result = resultObject.get()[0]
-        for geneName in result.keys():
+        hitResult, readResult = resultObject.get()[0]
+
+        #print('I found a hit result with ' + str(len(hitResult.keys())) + ' hits.')
+        #print('I found a read result with ' + str(len(readResult.keys())) + ' reads.')
+
+        for geneName in hitResult.keys():
             if geneName not in combinedHitSummary.keys():
                 combinedHitSummary[geneName] = set()
-            combinedHitSummary[geneName] = combinedHitSummary[geneName].union(result[geneName])
+            combinedHitSummary[geneName] = combinedHitSummary[geneName].union(hitResult[geneName])
+
+        for readName in readResult.keys():
+            combinedReadSummary[readName] = readResult[readName]
 
     # Sort by read counts
     combinedHitSummary = {k: v for k, v in sorted(combinedHitSummary.items(), key=lambda item: len(list(item[1])), reverse=True)}
@@ -293,50 +302,142 @@ def checkReadsAgainstGuideRNAs(readData=None, guideRnas=None, threadCount=1, fin
             for readName in list(combinedHitSummary[geneName]):
                 hitSummaryFile.write(delimiter.join([findOriginReadFile(readData=readData, readName=readName),readName]) + newline)
 
+    perReadSummaryFileName = join(finalResultDirectory, 'readSummary.csv')
+    with open(perReadSummaryFileName,'w') as readSummaryFile:
+        readSummaryFile.write(delimiter.join(['Read File', 'Read Name', 'Read Length', 'Guide RNA Gene', 'Guide RNA Sequence']) + newline)
+        for readName in combinedReadSummary.keys():
+            readFileName = findOriginReadFile(readData=readData, readName=readName)
+            readSummaryFile.write(delimiter.join([readFileName, readName
+                , str(combinedReadSummary[readName]['read_length'])
+                , combinedReadSummary[readName]['sg_gene_found']
+                , combinedReadSummary[readName]['sg_rna_found']]) + newline)
+
+
+def replaceText(fullSeq=None, replaceText=None, startIndex=None):
+    temp = list(fullSeq)
+    for i in range(0, len(replaceText)):
+        temp[i+startIndex] = replaceText[i]
+    returnText = "".join(temp)
+    return returnText
+
+
+def writeReadAlignmentToConsole(readName=None, readSummary=None, readSeq=None, newline= '\n'):
+    print('Hit! Readname:' + str(readName) + ', Genename:' + str(readSummary['sg_gene_found']))
+    print(readSeq)
+
+    alignmentSeq = ' ' * len(readSeq)
+    # Aligned sgRNA Sequence
+    alignmentSeq = replaceText(fullSeq=alignmentSeq, replaceText=readSummary['sg_rna_found'], startIndex = readSeq.index(readSummary['sg_rna_found']))
+
+    # Aligned Flanking Sequence
+    alignmentSeq = replaceText(fullSeq=alignmentSeq, replaceText=readSummary['gecko_flank_left_seq'].lower(), startIndex=readSummary['gecko_flank_left_index'])
+    alignmentSeq = replaceText(fullSeq=alignmentSeq, replaceText=readSummary['gecko_flank_right_seq'].lower(), startIndex=readSummary['gecko_flank_right_index'])
+
+    alignmentSeq = replaceText(fullSeq=alignmentSeq, replaceText=readSummary['gecko_reverse_primer_seq'], startIndex=readSummary['gecko_reverse_primer_index'])
+
+    #['gecko_reverse_primer_seq'], readSummary[readName]['gecko_reverse_primer_index']
+
+    print(alignmentSeq + newline)
+
+    pass
+
+def findSubsequenceInRead(readSeq=None, subSequences=None, subsequenceMinimum=12):
+    for subSequence in subSequences:
+        # TODO: This will break if subsequence < 10
+        for trimIndex in range(0,len(subSequence)-subsequenceMinimum):
+            # trim from left
+            subsequenceTrimmed = subSequence[trimIndex:]
+            if subsequenceTrimmed in readSeq:
+                return subsequenceTrimmed, readSeq.index(subsequenceTrimmed)
+
+            # trim from right
+            subsequenceTrimmed = subSequence[0:len(subSequence)-trimIndex]
+            if subsequenceTrimmed in readSeq:
+                return subsequenceTrimmed, readSeq.index(subsequenceTrimmed)
+
+    return '',0
 
 
 def compareReadFileAgainstGuideRNAs(readFileName=None, reads=None, guideRnas=None):
     print('Comparing reads for file ' + str(readFileName))
-    reverseComplementGuideRNAs = {}
+
+    # Reverse Complement Guide RNA Sequences
     for geneName in guideRnas.keys():
-        reverseComplementGuideRNAs[geneName] = [str(Seq(sgRna).reverse_complement()) for sgRna in guideRnas[geneName]]
+        guideRnas[geneName].extend([str(Seq(sgRna).reverse_complement()) for sgRna in guideRnas[geneName]])
+
+    # Gecko Flanking Sequences
+    # https://github.com/fengzhanglab/Screening_Protocols_manuscript/blob/master/design_library.py
+    geckoFlankLeft = ['TTTCTTGGCTTTATATATCTTGTGGAAAGGACGAAACACCG']
+    geckoFlankLeft.extend([str(Seq(geckoSeq).reverse_complement()) for geckoSeq in geckoFlankLeft])
+    geckoFlankRight = ['GTTTTAGAGCTAGAAATAGCAAGTTAAAATAAGGCTAGTCCGT']
+    geckoFlankRight.extend([str(Seq(geckoSeq).reverse_complement()) for geckoSeq in geckoFlankRight])
+
+    # Some reverse primer sequences, I think i see these in the reads
+    # https://www.nature.com/articles/nprot.2017.016/tables/3
+    geckoLibraryReverseSequence = ['GTGACTGGAGTTCAGACGTGTGCTCTTCCGATCTCCGACTCGGTGCCACTTTTTCAA']
+    geckoLibraryReverseSequence.extend([str(Seq(geckoSeq).reverse_complement()) for geckoSeq in geckoLibraryReverseSequence])
 
     guideRnaHitSummary = {}
+    # TODO: I'm using read name as a key in this dictionary. That's flawed because the same read name can appear in multiple files.
+    readSummary={}
+
     for readName in reads.keys():
-        readSeq = reads[readName]['seq']
 
-        # Check "forward" target sequences
-        for geneName in guideRnas.keys():
-            for sgRna in guideRnas[geneName]:
-                if sgRna in readSeq:
-                    if geneName not in guideRnaHitSummary.keys():
-                        guideRnaHitSummary[geneName] = set()
+        try:
 
-                    guideRnaHitSummary[geneName].add(readName)
 
-        # Check "reverse" target sequences
-        for geneName in reverseComplementGuideRNAs.keys():
-            for sgRna in reverseComplementGuideRNAs[geneName]:
-                if sgRna in readSeq:
-                    if geneName not in guideRnaHitSummary.keys():
-                        guideRnaHitSummary[geneName] = set()
+            readSeq = reads[readName]['seq']
 
-                    guideRnaHitSummary[geneName].add(readName)
+            readSummary[readName] = {}
+
+            #readSummary[readName]['direction'] = None
+            readSummary[readName]['sg_rna_found']=''
+            readSummary[readName]['sg_gene_found']=''
+            readSummary[readName]['read_length']=len(readSeq)
+
+            # Check "forward" target sequences
+            for geneName in guideRnas.keys():
+                for sgRna in guideRnas[geneName]:
+                    if sgRna in readSeq:
+                        readSummary[readName]['sg_rna_found']=sgRna
+                        readSummary[readName]['sg_gene_found']=geneName
+                        #readSummary[readName]['direction']='Forward'
+
+                        if geneName not in guideRnaHitSummary.keys():
+                            guideRnaHitSummary[geneName] = set()
+
+                        guideRnaHitSummary[geneName].add(readName)
+
+                        # We're only expecting one guide RNA per read....right?
+                        break
+
+            # Other sequences found in the reads...
+            readSummary[readName]['gecko_flank_left_seq'], readSummary[readName]['gecko_flank_left_index'] = findSubsequenceInRead(readSeq=readSeq, subSequences=geckoFlankLeft)
+            readSummary[readName]['gecko_flank_right_seq'], readSummary[readName]['gecko_flank_right_index'] = findSubsequenceInRead(readSeq=readSeq, subSequences=geckoFlankRight)
+
+            readSummary[readName]['gecko_reverse_primer_seq'], readSummary[readName]['gecko_reverse_primer_index'] = findSubsequenceInRead(readSeq=readSeq, subSequences=geckoLibraryReverseSequence)
+
+            #if(readSummary[readName]['sg_rna_found'] is not None):
+            #    writeReadAlignmentToConsole(readName=readName, readSummary=readSummary[readName],  readSeq=readSeq)
+
+        except Exception as e:
+            print('EXCEPTION in read ' + str(readName) + str(e))
+            print_exc()
+            raise(e)
 
     print('Done comparing reads for file ' + str(readFileName))
-    return guideRnaHitSummary
-
+    return guideRnaHitSummary, readSummary
 
 if __name__ == '__main__':
     args = parseArgs()
 
     # TODO: Maybe need to combine this, and write to hard drive instead of keeping it all in memory.
     readData = loadReadFastqFiles(libraryDirectory=args.sequencedlibrary)
-    writeReadFastas(readData=readData, outputDirectory=args.fasta, batchSize=int(args.batch))
-    writeReadSummary(readData=readData, finalResultDirectory=args.summarydirectory)
+    #writeReadFastas(readData=readData, outputDirectory=args.fasta, batchSize=int(args.batch))
+    #writeReadSummary(readData=readData, finalResultDirectory=args.summarydirectory)
     guideRnas = readGuideRNAs(guideFileName=args.guidernas)
     checkReadsAgainstGuideRNAs(readData=readData, guideRnas=guideRnas, threadCount=int(args.threads), finalResultDirectory=args.summarydirectory)
-    blastReads(fastaDirectory=args.fasta, outputDirectory=args.blastresults, blastDatabase=args.blastdatabase, threadCount=int(args.threads))
-    summarizeAndCombineBlastResults(readData=readData, blastResultDirectory=args.blastresults, finalResultDirectory=args.summarydirectory)
+    #blastReads(fastaDirectory=args.fasta, outputDirectory=args.blastresults, blastDatabase=args.blastdatabase, threadCount=int(args.threads))
+    #summarizeAndCombineBlastResults(readData=readData, blastResultDirectory=args.blastresults, finalResultDirectory=args.summarydirectory)
 
     print('Done.')
