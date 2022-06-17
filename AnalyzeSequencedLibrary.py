@@ -417,8 +417,8 @@ def compareReadFileAgainstGuideRNAs(readFileName=None, reads=None, guideRnas=Non
 
             readSummary[readName]['gecko_reverse_primer_seq'], readSummary[readName]['gecko_reverse_primer_index'] = findSubsequenceInRead(readSeq=readSeq, subSequences=geckoLibraryReverseSequence)
 
-            #if(readSummary[readName]['sg_rna_found'] is not None):
-            #    writeReadAlignmentToConsole(readName=readName, readSummary=readSummary[readName],  readSeq=readSeq)
+            if(readSummary[readName]['sg_rna_found'] is not None):
+                writeReadAlignmentToConsole(readName=readName, readSummary=readSummary[readName],  readSeq=readSeq)
 
         except Exception as e:
             print('EXCEPTION in read ' + str(readName) + str(e))
