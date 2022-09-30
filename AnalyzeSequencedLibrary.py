@@ -36,12 +36,19 @@ def loadReadFastqFiles(libraryDirectory=None):
     readData = {}
     readCount = 0
 
-    fileList = [f for f in listdir(libraryDirectory) if isfile(join(libraryDirectory, f))]
+    # Is it a file or a directory?
+    if(str(libraryDirectory).endswith('.fastq.gz') ):
+        fileList = [libraryDirectory]
+    elif isdir(libraryDirectory):
+        fileList = [f for f in listdir(libraryDirectory) if isfile(join(libraryDirectory, f))]
+    else:
+        raise Exception ('What Am I supposed to do with this file? Doesnt look like a directory:' + str(libraryDirectory))
 
     for fileName in fileList:
         readData[fileName] = {}
         # If it's a fastq.gz file
         if(fileName.lower().endswith('.fastq.gz')):
+            print ('Reading file:' + str(fileName))
             with gzip.open(join(libraryDirectory, fileName), "rt") as handle:
                 for record in SeqIO.parse(handle, "fastq"):
                     readCount += 1
@@ -51,7 +58,8 @@ def loadReadFastqFiles(libraryDirectory=None):
                     readData[fileName][str(record.id)] = currentRead
 
         else:
-            raise Exception ('Have not implemented handling this file type:' + str(fileName))
+            #raise Exception ('Have not implemented handling this file type:' + str(fileName))
+            print('I am ignoring this file: Have not implemented handling this file type:' + str(fileName))
 
     print ('Read ' + str(readCount) + ' reads from ' + str(len(fileList)) + ' files.')
     return readData
@@ -200,7 +208,7 @@ def summarizeAndCombineBlastResults(readData=None, blastResultDirectory=None, fi
 
             summaryFile.write(newline + newline)
 
-def writeReadSummary(readData=None, finalResultDirectory=None, newline='\n',delimiter=','):
+def writeReadSummary(readData=None, finalResultDirectory=None, newline='\n',delimiter=',', readLengthFigures=False):
     print('Writing Read Summary to ' + str(finalResultDirectory))
 
     if not isdir(finalResultDirectory):
@@ -209,27 +217,28 @@ def writeReadSummary(readData=None, finalResultDirectory=None, newline='\n',deli
     readLengths=[]
     readLengthsPerFile={}
 
-    readLengthFilename = join(finalResultDirectory,'ReadLengths.csv')
-    with open (readLengthFilename,'w') as readLengthFile:
-        for readFileName in readData.keys():
-            readLengthsPerFile[readFileName]=[]
-            for readName in readData[readFileName].keys():
-                # TODO: Calculate average read quality, maybe
-                readLengthFile.write(delimiter.join([readFileName,readName,str(len(readData[readFileName][readName]['seq']))]) + newline)
+    # TODO: This is disabled, I can re-enable this in the future.....
+    if (readLengthFigures):
+        readLengthFilename = join(finalResultDirectory,'ReadLengths.csv')
+        with open (readLengthFilename,'w') as readLengthFile:
+            for readFileName in readData.keys():
+                readLengthsPerFile[readFileName]=[]
+                for readName in readData[readFileName].keys():
+                    # TODO: Calculate average read quality, maybe
+                    readLengthFile.write(delimiter.join([readFileName,readName,str(len(readData[readFileName][readName]['seq']))]) + newline)
 
-                readLengths.append(len(readData[readFileName][readName]['seq']))
-                readLengthsPerFile[readFileName].append(len(readData[readFileName][readName]['seq']))
+                    readLengths.append(len(readData[readFileName][readName]['seq']))
+                    readLengthsPerFile[readFileName].append(len(readData[readFileName][readName]['seq']))
 
-
-    sns.kdeplot(readLengths)
-    plt.title('Read Length, All ' + ' (N=' + str(len(readLengths)) + ')')
-    plt.savefig(join(finalResultDirectory,'Length.AllReads.png'), bbox_inches='tight')
-    plt.clf()
-    for readFileName in readLengthsPerFile.keys():
-        sns.kdeplot(readLengthsPerFile[readFileName])
-        plt.title('Read Length, ' + str(readFileName) + ' (N=' + str(len(readLengthsPerFile[readFileName])) + ')')
-        plt.savefig(join(finalResultDirectory,'Length.' + str(readFileName) + '.png'), bbox_inches='tight')
+        sns.kdeplot(readLengths)
+        plt.title('Read Length, All ' + ' (N=' + str(len(readLengths)) + ')')
+        plt.savefig(join(finalResultDirectory,'Length.AllReads.png'), bbox_inches='tight')
         plt.clf()
+        for readFileName in readLengthsPerFile.keys():
+            sns.kdeplot(readLengthsPerFile[readFileName])
+            plt.title('Read Length, ' + str(readFileName) + ' (N=' + str(len(readLengthsPerFile[readFileName])) + ')')
+            plt.savefig(join(finalResultDirectory,'Length.' + str(readFileName) + '.png'), bbox_inches='tight')
+            plt.clf()
 
 def readGuideRNAs(guideFileName=None, delimiter='\t', header=True):
     print('Reading Guide RNA File:' + str(guideFileName))
@@ -358,7 +367,7 @@ def findSubsequenceInRead(readSeq=None, subSequences=None, subsequenceMinimum=12
     return '',0
 
 
-def compareReadFileAgainstGuideRNAs(readFileName=None, reads=None, guideRnas=None):
+def compareReadFileAgainstGuideRNAs(readFileName=None, reads=None, guideRnas=None, verbose=False):
     print('Comparing reads for file ' + str(readFileName))
 
     # Reverse Complement Guide RNA Sequences
@@ -417,7 +426,7 @@ def compareReadFileAgainstGuideRNAs(readFileName=None, reads=None, guideRnas=Non
 
             readSummary[readName]['gecko_reverse_primer_seq'], readSummary[readName]['gecko_reverse_primer_index'] = findSubsequenceInRead(readSeq=readSeq, subSequences=geckoLibraryReverseSequence)
 
-            if(readSummary[readName]['sg_rna_found'] is not None):
+            if(readSummary[readName]['sg_rna_found'] is not None and verbose):
                 writeReadAlignmentToConsole(readName=readName, readSummary=readSummary[readName],  readSeq=readSeq)
 
         except Exception as e:
@@ -433,10 +442,14 @@ if __name__ == '__main__':
 
     # TODO: Maybe need to combine this, and write to hard drive instead of keeping it all in memory.
     readData = loadReadFastqFiles(libraryDirectory=args.sequencedlibrary)
-    #writeReadFastas(readData=readData, outputDirectory=args.fasta, batchSize=int(args.batch))
-    #writeReadSummary(readData=readData, finalResultDirectory=args.summarydirectory)
+    writeReadFastas(readData=readData, outputDirectory=args.fasta, batchSize=int(args.batch))
+    writeReadSummary(readData=readData, finalResultDirectory=args.summarydirectory)
     guideRnas = readGuideRNAs(guideFileName=args.guidernas)
     checkReadsAgainstGuideRNAs(readData=readData, guideRnas=guideRnas, threadCount=int(args.threads), finalResultDirectory=args.summarydirectory)
+
+
+
+
     #blastReads(fastaDirectory=args.fasta, outputDirectory=args.blastresults, blastDatabase=args.blastdatabase, threadCount=int(args.threads))
     #summarizeAndCombineBlastResults(readData=readData, blastResultDirectory=args.blastresults, finalResultDirectory=args.summarydirectory)
 

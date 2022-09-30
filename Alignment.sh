@@ -1,7 +1,7 @@
 # Set some variables.
 ReferenceInputFile="input/Reference.AmbiguousBarcode.fasta"
-ReadInputFile="input/sequenced_library/CRISPR20220513_S1_L001_R1_001.fastq.gz"
-AlignmentPrefix="CRISPR20220513_S1_L001_R1_001.fastq.gz_alignment"
+ReadInputFile="PrepA02/raw_reads/prepA02_AH2GWNAFX5_S2_L001_R1_001.fastq.gz"
+AlignmentPrefix="prepA02_AH2GWNAFX5_S2_L001_R1_001.fastq.gz_alignment"
 OutputSubdir=$AlignmentPrefix"/"
 
 # Generate some variables
